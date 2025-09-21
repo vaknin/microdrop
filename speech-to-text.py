@@ -21,6 +21,9 @@ SOCKET_WAIT_SECONDS = 10
 SOCKET_WAIT_INTERVAL = 0.1
 CLIENT_TIMEOUT_SECONDS = 30
 
+DEFAULT_OMP_THREADS = "14"
+os.environ.setdefault("OMP_NUM_THREADS", DEFAULT_OMP_THREADS)
+
 np: Any | None = None
 sd: Any | None = None
 sf: Any | None = None
@@ -32,10 +35,16 @@ def _load_server_modules() -> None:
     if np is not None:
         return
 
-    import numpy as _np
-    import sounddevice as _sd
-    import soundfile as _sf
-    from faster_whisper import WhisperModel as _WhisperModel
+    try:
+        import numpy as _np
+        import sounddevice as _sd
+        import soundfile as _sf
+        from faster_whisper import WhisperModel as _WhisperModel
+    except ModuleNotFoundError as exc:  # pragma: no cover - defensive
+        missing = exc.name or "dependency"
+        raise RuntimeError(
+            f"Missing Python dependency '{missing}'. Activate the virtual environment or install requirements."
+        ) from exc
 
     np = _np
     sd = _sd
@@ -46,7 +55,7 @@ def _load_server_modules() -> None:
 class SpeechToText:
     """Manage audio capture and transcription with an optional model cache."""
 
-    def __init__(self, sample_rate: int = 16000, model_name: str = "base") -> None:
+    def __init__(self, sample_rate: int = 16000, model_name: str = "small.en") -> None:
         _load_server_modules()
 
         self.sample_rate = sample_rate
@@ -475,6 +484,10 @@ def wait_for_socket(timeout: float = SOCKET_WAIT_SECONDS) -> bool:
 
 
 def send_command(command: str, auto_start: bool = True) -> Dict[str, Any]:
+    # Don't auto-start daemon for shutdown command - it makes no sense
+    if command == "shutdown":
+        auto_start = False
+
     attempt = 0
     while True:
         attempt += 1
@@ -508,6 +521,12 @@ def send_command(command: str, auto_start: bool = True) -> Dict[str, Any]:
 def client_main(args: argparse.Namespace) -> int:
     try:
         response = send_command(args.command, auto_start=not args.no_auto_start)
+    except (FileNotFoundError, ConnectionRefusedError) as exc:
+        if args.command == "shutdown":
+            print("No daemon running", file=sys.stderr)
+        else:
+            print(f"Error communicating with daemon: {exc}", file=sys.stderr)
+        return 1
     except Exception as exc:  # pragma: no cover - defensive
         print(f"Error communicating with daemon: {exc}", file=sys.stderr)
         return 1
