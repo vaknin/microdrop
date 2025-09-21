@@ -22,7 +22,6 @@ PyYAML==6.0.2
 requests==2.32.5
 setuptools==80.9.0
 sounddevice==0.5.2
-soundfile==0.13.1
 sympy==1.14.0
 tokenizers==0.22.1
 tqdm==4.67.1

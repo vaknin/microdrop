@@ -9,7 +9,6 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -26,19 +25,17 @@ os.environ.setdefault("OMP_NUM_THREADS", DEFAULT_OMP_THREADS)
 
 np: Any | None = None
 sd: Any | None = None
-sf: Any | None = None
 WhisperModel: Any | None = None
 
 
 def _load_server_modules() -> None:
-    global np, sd, sf, WhisperModel
+    global np, sd, WhisperModel
     if np is not None:
         return
 
     try:
         import numpy as _np
         import sounddevice as _sd
-        import soundfile as _sf
         from faster_whisper import WhisperModel as _WhisperModel
     except ModuleNotFoundError as exc:  # pragma: no cover - defensive
         missing = exc.name or "dependency"
@@ -48,7 +45,6 @@ def _load_server_modules() -> None:
 
     np = _np
     sd = _sd
-    sf = _sf
     WhisperModel = _WhisperModel
 
 
@@ -173,25 +169,15 @@ class SpeechToText:
 
         audio = np.concatenate(self._audio_chunks, axis=0).astype(np.float32).flatten()
 
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
-                sf.write(temp_path, audio, self.sample_rate)
+        ok, transcript, message = self._transcribe(audio)
+        if not ok:
+            return False, message, None
 
-            ok, transcript, message = self._transcribe(temp_path)
-            if not ok:
-                return False, message, None
+        self._audio_chunks = []
+        self._stop_event.clear()
 
-            self._audio_chunks = []
-            self._stop_event.clear()
-
-            overflow_note = " (audio overflow detected)" if self._buffer_overflow else ""
-            return True, f"Transcription complete{overflow_note}", transcript
-
-        finally:
-            if temp_path and temp_path.exists():
-                temp_path.unlink()
+        overflow_note = " (audio overflow detected)" if self._buffer_overflow else ""
+        return True, f"Transcription complete{overflow_note}", transcript
 
     # ------------------------------------------------------------------
     # Transcription and clipboard helpers
@@ -210,14 +196,14 @@ class SpeechToText:
             self._model_last_used = time.time()
         return True, None
 
-    def _transcribe(self, audio_path: Path) -> Tuple[bool, Optional[str], str]:
+    def _transcribe(self, audio: "np.ndarray") -> Tuple[bool, Optional[str], str]:
         ok, message = self._ensure_model()
         if not ok:
             return False, None, message or "Model load failed"
 
         try:
             segments, _info = self.model.transcribe(
-                str(audio_path),
+                audio,
                 language="en",
                 task="transcribe",
             )
