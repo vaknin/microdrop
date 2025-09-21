@@ -1,4 +1,6 @@
-# Speech-to-Text Transcription Tool
+# microdrop
+
+🎤 Hotkey speech-to-text with auto-paste
 
 A Python-based speech-to-text daemon that provides real-time audio transcription with automatic text insertion at the cursor position.
 
